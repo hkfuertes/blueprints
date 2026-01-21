@@ -2,43 +2,45 @@ blueprint:
   name: IKEA Bilresa Remote (Zigbee2MQTT device; custom actions)
   description: Automation made for IKEA Bilresa (E2489) based on Zigbee2MQTT actions.
   domain: automation
-  author: Matei Asan
+  author: Matei Asan & hkfuertes
   input:
-    remote_device:
-      name: Bilresa Remote
-      description: Select your Bilresa 2-button remote from Zigbee2MQTT.
+    remote_devices:
+      name: Bilresa Remotes
+      description: Select your Bilresa 2-button remotes from Zigbee2MQTT.
+      default: []
       selector:
         device:
           integration: mqtt
           manufacturer: IKEA
           model: "BILRESA remote control with buttons"
+        multiple: true
     action_on:
-      name: 🔼 Up Button - Single press
+      name: Up Button - Single press
       default: []
       selector:
         action: {}
     action_off:
-      name: 🔽 Down Button - Single press
+      name: Down Button - Single press
       default: []
       selector:
         action: {}
     action_on_double:
-      name: 🔼 Up Button - Double press
+      name: Up Button - Double press
       default: []
       selector:
         action: {}
     action_off_double:
-      name: 🔽 Down Button - Double press
+      name: Down Button - Double press
       default: []
       selector:
         action: {}
     action_up:
-      name: 🔼 Up Button - Hold
+      name: Up Button - Hold
       default: []
       selector:
         action: {}
     action_down:
-      name: 🔽 Down Button - Hold
+      name: Down Button - Hold
       default: []
       selector:
         action: {}
@@ -55,43 +57,43 @@ max_exceeded: silent
 trigger:
   - platform: device
     domain: mqtt
-    device_id: !input remote_device
+    device_id: !input remote_devices
     type: action
     subtype: "on"
     id: "on"
   - platform: device
     domain: mqtt
-    device_id: !input remote_device
+    device_id: !input remote_devices
     type: action
     subtype: "off"
     id: "off"
   - platform: device
     domain: mqtt
-    device_id: !input remote_device
+    device_id: !input remote_devices
     type: action
     subtype: "on_double"
     id: "on_double"
   - platform: device
     domain: mqtt
-    device_id: !input remote_device
+    device_id: !input remote_devices
     type: action
     subtype: "off_double"
     id: "off_double"
   - platform: device
     domain: mqtt
-    device_id: !input remote_device
+    device_id: !input remote_devices
     type: action
     subtype: "brightness_move_up"
     id: "up"
   - platform: device
     domain: mqtt
-    device_id: !input remote_device
+    device_id: !input remote_devices
     type: action
     subtype: "brightness_move_down"
     id: "down"
   - platform: device
     domain: mqtt
-    device_id: !input remote_device
+    device_id: !input remote_devices
     type: action
     subtype: "brightness_stop"
     id: "stop"
