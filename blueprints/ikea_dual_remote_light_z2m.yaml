@@ -21,19 +21,16 @@ blueprint:
           filter:
             - integration: mqtt
               manufacturer: IKEA
-              model: RODRET wireless dimmer/power switch
+              model_id: E2201
             - integration: mqtt
               manufacturer: IKEA
-              model: SOMRIG shortcut button
+              model_id: E2213
             - integration: mqtt
               manufacturer: IKEA
-              model: TRADFRI on/off switch
+              model_id: E1743
             - integration: mqtt
               manufacturer: IKEA
-              model: BILRESA remote control with buttons
-            - integration: mqtt
-              manufacturer: IKEA
-              model: BILRESA remote control with buttons (Matter)
+              model_id: E2489
           multiple: true
     light:
       name: Light
