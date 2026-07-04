@@ -31,6 +31,9 @@ blueprint:
             - integration: mqtt
               manufacturer: IKEA
               model: BILRESA remote control with buttons
+            - integration: mqtt
+              manufacturer: IKEA
+              model: BILRESA remote control with buttons (Matter)
           multiple: true
     light:
       name: Light
