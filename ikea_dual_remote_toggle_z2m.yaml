@@ -1,0 +1,95 @@
+blueprint:
+  homeassistant:
+    min_version: 2024.10.0
+  author: hkfuertes
+  domain: automation
+  name: "[Z2M] IKEA Dual Button Remote - Dual Toggle"
+  description: |
+    Two independent toggle buttons for IKEA RODRET, SOMRIG, TRADFRI or BILRESA
+    remotes via Zigbee2MQTT. Each button toggles its own target (light OR switch).
+    - Press on / (1 dot)  -> toggle Target 1
+    - Press off / (2 dots) -> toggle Target 2
+  input:
+    remote_devices:
+      name: Remotes
+      description: IKEA remote(s) (Rodret, Somrig, Tradfri, Bilresa) to use.
+      default: []
+      selector:
+        device:
+          filter:
+            - integration: mqtt
+              manufacturer: IKEA
+              model_id: E2201
+            - integration: mqtt
+              manufacturer: IKEA
+              model_id: E2213
+            - integration: mqtt
+              manufacturer: IKEA
+              model_id: E1743
+            - integration: mqtt
+              manufacturer: IKEA
+              model_id: E2489
+          multiple: true
+    target_1:
+      name: Target 1 (button on / 1 dot)
+      description: Light or switch to toggle with the ON / 1-dot button.
+      selector:
+        entity:
+          filter:
+            - domain: light
+            - domain: switch
+          multiple: true
+    target_2:
+      name: Target 2 (button off / 2 dots)
+      description: Light or switch to toggle with the OFF / 2-dot button.
+      selector:
+        entity:
+          filter:
+            - domain: light
+            - domain: switch
+          multiple: true
+mode: restart
+max_exceeded: silent
+triggers:
+  # RODRET (E2201) - TRADFRI (E1743) - BILRESA (E2489)
+  - trigger: mqtt
+    topic: "+/+/action"
+    payload: "on"
+    id: button-1
+  - trigger: mqtt
+    topic: "+/+/action"
+    payload: "off"
+    id: button-2
+  # SOMRIG - E2213
+  - trigger: mqtt
+    topic: "+/+/action"
+    payload: 1_short_release
+    id: button-1
+  - trigger: mqtt
+    topic: "+/+/action"
+    payload: 2_short_release
+    id: button-2
+variables:
+  is_mqtt: "{{ trigger.platform == 'mqtt' }}"
+  remote_devices: !input remote_devices
+  remote_devices_names: "{{ remote_devices | map('device_attr', 'name') | list }}"
+conditions:
+  - condition: template
+    value_template: >-
+      {{ (trigger.topic.split('/')[1] in remote_devices_names) if is_mqtt else false }}
+actions:
+  - choose:
+      - conditions:
+          - condition: trigger
+            id: button-1
+        sequence:
+          - action: homeassistant.toggle
+            target:
+              entity_id: !input target_1
+      - conditions:
+          - condition: trigger
+            id: button-2
+        sequence:
+          - action: homeassistant.toggle
+            target:
+              entity_id: !input target_2
