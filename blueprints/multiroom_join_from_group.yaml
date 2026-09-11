@@ -1,0 +1,53 @@
+# blueprints/multiroom_join_from_group.yaml
+blueprint:
+  name: Multiroom join from group
+  description: >
+    When audio is sent to a media_player group, automatically join the group
+    members for multiroom playback (ESPHome or others).
+  domain: automation
+  input:
+    media_group:
+      name: Media player group
+      description: >
+        The group that contains the speakers (e.g. group.all_speakers).
+      selector:
+        entity:
+          filter:
+            domain:
+              - group
+
+trigger:
+  - trigger: state
+    entity_id: !input media_group
+    attribute: media_content_id
+    from: null
+    to: "*"
+  - trigger: event
+    event_type: call_service
+    event_data:
+      domain: media_player
+      service: play_media
+    context:
+      entity_id: !input media_group
+
+action:
+  - variables:
+      group_id: !input media_group
+      members: >
+        {{ state_attr(group_id, 'entity_id') or [] }}
+      leader: >
+        {{ members[0] if members | length > 0 else None }}
+      followers: >
+        {{ members[1:] if members | length > 1 else [] }}
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ leader is not none and followers | length > 0 }}"
+        sequence:
+          - action: media_player.join
+            target:
+              entity_id: "{{ leader }}"
+            data:
+              group_members: "{{ followers }}"
+
+mode: restart
