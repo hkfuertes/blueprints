@@ -1,0 +1,251 @@
+# Onju Voice — AirPlay 2 receiver with local mute controls.
+# Copy secrets.example.yaml to secrets.yaml and fill in Wi-Fi/OTA credentials.
+
+substitutions:
+  name: onju-airplay2
+  friendly: "Onju"
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly}
+  min_version: 2026.4.0
+
+esp32:
+  board: esp32-s3-devkitc-1
+  framework:
+    type: esp-idf
+
+psram:
+  mode: octal
+  speed: 80MHz
+
+logger:
+  level: INFO
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  power_save_mode: none
+  ap:
+    ssid: "${friendly} Fallback"
+    password: !secret wifi_password
+
+captive_portal:
+
+# Sin encryption: el componente AirPlay no es compatible con ella
+api:
+  reboot_timeout: 0s
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+safe_mode:
+
+external_components:
+  - source:
+      type: git
+      url: https://github.com/henriklied/esphome-airplay2
+    components:
+      - airplay_receiver
+
+airplay_receiver:
+  id: airplay
+  name: ${friendly}
+  i2s_bclk_pin: GPIO18
+  i2s_lrclk_pin: GPIO13
+  i2s_dout_pin: GPIO12
+  audio_channel_mode: mono
+  sample_rate: 44100
+  buffer_size: 8000
+  dsp:
+    preamp: 6dB
+    filters:
+      - type: high_pass
+        frequency: 120Hz
+        q: 0.7
+
+# --- LEDs 1-4: volumen blanco durante 2 s; mute naranja ---
+light:
+  - platform: esp32_rmt_led_strip
+    id: leds
+    pin: GPIO11
+    chipset: SK6812
+    num_leds: 6
+    channel_colors: GRB
+    default_transition_length: 0s
+    restore_mode: ALWAYS_OFF
+    internal: true
+
+  - platform: partition
+    id: top_led
+    internal: true
+    default_transition_length: 0s
+    segments:
+      - id: leds
+        from: 1
+        to: 4
+    effects:
+      - addressable_lambda:
+          name: volume
+          update_interval: 50ms
+          lambda: |-
+            float v = id(airplay).volume * it.size();
+            int full = (int) v;
+            for (int i = 0; i < it.size(); i++) {
+              if (i < full) {
+                it[i] = Color::WHITE;
+              } else if (i == full) {
+                uint8_t b = (uint8_t) ((v - full) * 255);
+                it[i] = Color(b, b, b);
+              } else {
+                it[i] = Color::BLACK;
+              }
+            }
+
+# --- Mute físico del amplificador: GPIO21 queda fuera del componente ---
+switch:
+  - platform: gpio
+    id: amp_enable
+    internal: true
+    restore_mode: ALWAYS_OFF
+    pin:
+      number: GPIO21
+      inverted: false
+
+# --- Botón central de pánico e interruptor de mute ---
+esp32_touch:
+  setup_mode: false
+  measurement_duration: 0.25ms
+  sleep_duration: 2ms
+
+binary_sensor:
+  - platform: status
+    name: "Status"
+
+  - platform: esp32_touch
+    id: touch_center
+    pin: GPIO3
+    threshold: 2000
+    filters:
+      - delayed_on: 25ms
+      - delayed_off: 25ms
+    on_press:
+      - if:
+          condition:
+            media_player.is_muted: airplay
+          then:
+            - script.execute: amp_unmute
+          else:
+            - script.execute: amp_mute
+
+# --- Ajuste de ganancia desde Home Assistant ---
+number:
+  - platform: template
+    name: "AirPlay Preamp"
+    icon: mdi:volume-plus
+    unit_of_measurement: dB
+    entity_category: config
+    min_value: -6
+    max_value: 12
+    step: 1
+    initial_value: 6
+    optimistic: true
+    restore_value: true
+    on_value:
+      - lambda: id(airplay).set_dsp_preamp(x);
+
+# Polling YAML-only: upstream may update volume/mute without firing on_state.
+interval:
+  - interval: 100ms
+    then:
+      - if:
+          condition:
+            lambda: |-
+              static bool initialized = false;
+              static bool previous = false;
+              const bool current = id(airplay).is_muted();
+              const bool changed = !initialized || current != previous;
+              initialized = true;
+              previous = current;
+              return changed;
+          then:
+            - if:
+                condition:
+                  media_player.is_muted: airplay
+                then:
+                  - switch.turn_off: amp_enable
+                  - script.execute: show_mute
+                else:
+                  - switch.turn_on: amp_enable
+                  - script.execute: show_volume
+      - if:
+          condition:
+            lambda: |-
+              static float previous = id(airplay).volume;
+              const float current = id(airplay).volume;
+              const bool changed = current != previous;
+              previous = current;
+              return changed;
+          then:
+            - if:
+                condition:
+                  media_player.is_muted: airplay
+                then:
+                  - script.execute: show_mute
+                else:
+                  - script.execute: show_volume
+
+# --- Mute físico e indicador de volumen ---
+script:
+  - id: amp_mute
+    mode: restart
+    then:
+      - switch.turn_off: amp_enable
+      - media_player.mute: airplay
+      - script.execute: show_mute
+
+  - id: amp_unmute
+    mode: restart
+    then:
+      - media_player.unmute: airplay
+      - switch.turn_on: amp_enable
+      - script.execute: show_volume
+
+  - id: show_mute
+    mode: restart
+    then:
+      - script.stop: show_volume
+      - light.turn_on:
+          id: top_led
+          effect: "None"
+          red: 100%
+          green: 50%
+          blue: 0%
+          brightness: 60%
+
+  - id: show_volume
+    mode: restart
+    then:
+      - light.turn_on:
+          id: top_led
+          effect: volume
+          brightness: 60%
+      - delay: 2s
+      - light.turn_off: top_led
+
+# --- Diagnóstico ---
+debug:
+  update_interval: 30s
+
+sensor:
+  - platform: uptime
+    name: "Uptime"
+    update_interval: 30s
+  - platform: debug
+    free:
+      name: "Free Internal Heap"
+      entity_category: diagnostic
+    psram:
+      name: "Free PSRAM"
+      entity_category: diagnostic
