@@ -1,0 +1,268 @@
+substitutions:
+  name: onju-sendspin
+  friendly: "Onju"
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly}
+  min_version: 2026.4.0
+
+esp32:
+  board: esp32-s3-devkitc-1
+  framework:
+    type: esp-idf
+
+psram:
+  mode: octal
+  speed: 80MHz
+
+logger:
+  level: INFO
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  power_save_mode: none
+  ap:
+    ssid: "${friendly} Fallback"
+    password: !secret wifi_password
+
+captive_portal:
+
+api:
+  reboot_timeout: 0s
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+safe_mode:
+
+# --- Audio SendSpin ---
+i2s_audio:
+  - id: i2s_out
+    i2s_bclk_pin: GPIO18
+    i2s_lrclk_pin: GPIO13
+    sample_rate: 48000
+
+speaker:
+  - platform: i2s_audio
+    id: onju_speaker
+    i2s_audio_id: i2s_out
+    dac_type: external
+    i2s_dout_pin: GPIO12
+    sample_rate: 48000
+    channel: mono
+    timeout: never
+
+sendspin:
+  id: sendspin_hub
+
+media_source:
+  - platform: sendspin
+    id: sendspin_source
+    sendspin_id: sendspin_hub
+    sample_rate: 48000
+
+media_player:
+  - platform: speaker_source
+    id: sendspin_player
+    name: ${friendly}
+    media_pipeline:
+      speaker: onju_speaker
+      sources:
+        - sendspin_source
+
+# --- LEDs 1-4: volumen blanco durante 2 s; mute naranja ---
+light:
+  - platform: esp32_rmt_led_strip
+    id: leds
+    pin: GPIO11
+    chipset: SK6812
+    num_leds: 6
+    channel_colors: GRB
+    default_transition_length: 0s
+    restore_mode: ALWAYS_OFF
+    internal: true
+
+  - platform: partition
+    id: top_led
+    internal: true
+    default_transition_length: 0s
+    segments:
+      - id: leds
+        from: 1
+        to: 4
+    effects:
+      - addressable_lambda:
+          name: volume
+          update_interval: 50ms
+          lambda: |-
+            float v = id(sendspin_player).volume * it.size();
+            int full = (int) v;
+            for (int i = 0; i < it.size(); i++) {
+              if (i < full) {
+                it[i] = Color::WHITE;
+              } else if (i == full) {
+                uint8_t b = (uint8_t) ((v - full) * 255);
+                it[i] = Color(b, b, b);
+              } else {
+                it[i] = Color::BLACK;
+              }
+            }
+
+# --- Mute físico del amplificador ---
+switch:
+  - platform: gpio
+    id: amp_enable
+    internal: true
+    restore_mode: ALWAYS_OFF
+    pin:
+      number: GPIO21
+      inverted: false
+
+# --- Controles táctiles ---
+esp32_touch:
+  setup_mode: false
+  measurement_duration: 0.25ms
+  sleep_duration: 2ms
+
+binary_sensor:
+  - platform: status
+    name: "Status"
+
+  # Onju Voice: GPIO4 es volumen - y GPIO2 es volumen +.
+  - platform: esp32_touch
+    id: touch_volume_down
+    pin: GPIO4
+    threshold: 2000
+    filters:
+      - delayed_on: 25ms
+      - delayed_off: 25ms
+    on_press:
+      - media_player.volume_set:
+          id: sendspin_player
+          volume: !lambda return clamp(id(sendspin_player).volume - 0.05f, 0.0f, 1.0f);
+
+  - platform: esp32_touch
+    id: touch_volume_up
+    pin: GPIO2
+    threshold: 2000
+    filters:
+      - delayed_on: 25ms
+      - delayed_off: 25ms
+    on_press:
+      - media_player.volume_set:
+          id: sendspin_player
+          volume: !lambda return clamp(id(sendspin_player).volume + 0.05f, 0.0f, 1.0f);
+
+  - platform: esp32_touch
+    id: touch_center
+    pin: GPIO3
+    threshold: 2000
+    filters:
+      - delayed_on: 25ms
+      - delayed_off: 25ms
+    on_press:
+      - if:
+          condition:
+            media_player.is_muted: sendspin_player
+          then:
+            - script.execute: amp_unmute
+          else:
+            - script.execute: amp_mute
+
+# --- Actualiza LED y amplificador ---
+interval:
+  - interval: 100ms
+    then:
+      - if:
+          condition:
+            lambda: |-
+              static bool initialized = false;
+              static bool previous = false;
+              const bool current = id(sendspin_player).is_muted();
+              const bool changed = !initialized || current != previous;
+              initialized = true;
+              previous = current;
+              return changed;
+          then:
+            - if:
+                condition:
+                  media_player.is_muted: sendspin_player
+                then:
+                  - switch.turn_off: amp_enable
+                  - script.execute: show_mute
+                else:
+                  - switch.turn_on: amp_enable
+                  - script.execute: show_volume
+
+      - if:
+          condition:
+            lambda: |-
+              static float previous = id(sendspin_player).volume;
+              const float current = id(sendspin_player).volume;
+              const bool changed = current != previous;
+              previous = current;
+              return changed;
+          then:
+            - if:
+                condition:
+                  media_player.is_muted: sendspin_player
+                then:
+                  - script.execute: show_mute
+                else:
+                  - script.execute: show_volume
+
+script:
+  - id: amp_mute
+    mode: restart
+    then:
+      - switch.turn_off: amp_enable
+      - media_player.mute: sendspin_player
+      - script.execute: show_mute
+
+  - id: amp_unmute
+    mode: restart
+    then:
+      - media_player.unmute: sendspin_player
+      - switch.turn_on: amp_enable
+      - script.execute: show_volume
+
+  - id: show_mute
+    mode: restart
+    then:
+      - script.stop: show_volume
+      - light.turn_on:
+          id: top_led
+          effect: "None"
+          red: 100%
+          green: 50%
+          blue: 0%
+          brightness: 60%
+
+  - id: show_volume
+    mode: restart
+    then:
+      - light.turn_on:
+          id: top_led
+          effect: volume
+          brightness: 60%
+      - delay: 2s
+      - light.turn_off: top_led
+
+debug:
+  update_interval: 30s
+
+sensor:
+  - platform: uptime
+    name: "Uptime"
+    update_interval: 30s
+
+  - platform: debug
+    free:
+      name: "Free Internal Heap"
+      entity_category: diagnostic
+    psram:
+      name: "Free PSRAM"
+      entity_category: diagnostic
